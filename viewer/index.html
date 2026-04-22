@@ -336,7 +336,8 @@
       <button class="btn-export" style="margin-right:8px;" id="btn-filter" onclick="toggleFilter()">🔍 筛选</button>
       <button class="btn-export" style="margin-right:8px;" id="btn-plugins" onclick="openPlugins()">🧩 插件</button>
       <button class="btn-export" id="btn-settings" onclick="openSettings()">⚙ 设置</button>
-      <button class="btn-export" id="btn-export-all" onclick="exportAll()">⬆ Export All</button>
+      <button class="btn-export" id="btn-export-all" onclick="exportAllFiles('json')">⬆ JSON Files</button>
+      <button class="btn-export" id="btn-export-all-jsonl" onclick="exportAllFiles('jsonl')">⬆ JSONL Files</button>
     </div>
   </div>
   <div class="filter-bar" id="filter-bar" style="display:none;">
@@ -1823,24 +1824,118 @@ function exportCurrentThread() {
   URL.revokeObjectURL(url);
 }
 
-function exportAll() {
+async function exportAllFiles(format = 'json') {
   try {
-    const payload = {
-      exportedAt: new Date().toISOString(),
-      records: records,
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'ai-exporter-export-all.json';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    const exportRecords = await loadAllRecordsForExport();
+    if (exportRecords.length === 0) {
+      alert('No records to export.');
+      return;
+    }
+
+    if (window.showDirectoryPicker) {
+      const dir = await window.showDirectoryPicker({ mode: 'readwrite' });
+      await writeRecordsToDirectory(dir, exportRecords, format);
+      alert(`Exported ${exportRecords.length} ${format.toUpperCase()} files.`);
+      return;
+    }
+
+    if (exportRecords.length > 50 && !confirm(`This browser will download ${exportRecords.length} files one by one. Continue?`)) {
+      return;
+    }
+    for (const r of exportRecords) {
+      downloadRecordFile(r, format);
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
   } catch (e) {
-    alert('Export failed: ' + e.message);
+    if (e?.name !== 'AbortError') alert('Export failed: ' + e.message);
   }
+}
+
+async function loadAllRecordsForExport() {
+  const q = document.getElementById('search').value.trim().toLowerCase();
+  const pageSizeForExport = 1000;
+  let page = 1;
+  let total = Infinity;
+  const all = [];
+
+  while (all.length < total) {
+    const url = new URL(`${API_BASE}/api/threads`, window.location.origin);
+    url.searchParams.set('page', page);
+    url.searchParams.set('size', pageSizeForExport);
+    url.searchParams.set('full', '1');
+    if (activeSource) url.searchParams.set('source', activeSource);
+    if (q) url.searchParams.set('q', q);
+
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Failed to load records');
+    const data = await res.json();
+    const items = data.items || [];
+    total = data.total || items.length;
+    all.push(...items);
+    if (items.length === 0) break;
+    page++;
+  }
+
+  return applyExportFilters(all);
+}
+
+function applyExportFilters(items) {
+  const startDate = document.getElementById('filter-start-date').value;
+  const endDate = document.getElementById('filter-end-date').value;
+  const project = document.getElementById('filter-project').value;
+  const startTs = startDate ? new Date(startDate + 'T00:00:00').getTime() : null;
+  const endTs = endDate ? new Date(endDate + 'T23:59:59').getTime() : null;
+
+  return items.filter((r) => {
+    if (project && r.meta?.project !== project) return false;
+    const ts = r.meta?.created_at ? new Date(r.meta.created_at).getTime() : null;
+    if (startTs && (!ts || ts < startTs)) return false;
+    if (endTs && (!ts || ts > endTs)) return false;
+    return true;
+  });
+}
+
+async function writeRecordsToDirectory(dirHandle, items, format) {
+  for (const r of items) {
+    const source = safeFilePart(r.meta?.source || 'unknown');
+    const sourceDir = await dirHandle.getDirectoryHandle(source, { create: true });
+    const fileHandle = await sourceDir.getFileHandle(recordFileName(r, format), { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(recordFileContent(r, format));
+    await writable.close();
+  }
+}
+
+function downloadRecordFile(r, format) {
+  const blob = new Blob([recordFileContent(r, format)], { type: format === 'jsonl' ? 'application/x-ndjson' : 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = recordFileName(r, format);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function recordFileContent(r, format) {
+  return format === 'jsonl' ? JSON.stringify(r) + '\n' : JSON.stringify(r, null, 2);
+}
+
+function recordFileName(r, format) {
+  const source = safeFilePart(r.meta?.source || 'export');
+  const title = safeFilePart(r.meta?.prompt || r.thread_id || Date.now());
+  const id = safeFilePart(r.thread_id || Date.now());
+  return `${source}-${title}-${id}.${format}`;
+}
+
+function safeFilePart(value) {
+  return String(value || 'untitled')
+    .replace(/[\x00-\x1F\x7F]/g, '')
+    .replace(/[\\/\?%*:|"<>]/g, '-')
+    .replace(/\s+/g, '_')
+    .slice(0, 60)
+    .replace(/^_+|_+$/g, '') || 'untitled';
 }
 
 // ── Settings ───────────────────────────────────────────────────────────────────

@@ -5,7 +5,10 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { toTrainingJsonl, toMarkdown, computeStats } from "../../core/convert.js";
+import fs from "fs-extra";
+import os from "node:os";
+import path from "node:path";
+import { toTrainingJsonl, toMarkdown, computeStats, saveRecordsToDir } from "../../core/convert.js";
 
 const FIXTURE = {
   schema_version: "1.0.0",
@@ -20,6 +23,23 @@ const FIXTURE = {
   context: { files: [], diffs: [] },
   meta: { source: "cursor", project: "my-app", created_at: "2025-01-15T10:00:00Z", tokens: 200, prompt: "Binary search", recognition_confidence: "high" },
 };
+
+describe("saveRecordsToDir", () => {
+  it("writes one JSONL file per record when format is jsonl", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "aex-jsonl-"));
+    try {
+      await saveRecordsToDir([FIXTURE, { ...FIXTURE, thread_id: "def456" }], dir, { format: "jsonl" });
+      const sourceDir = path.join(dir, "cursor");
+      const files = (await fs.readdir(sourceDir)).filter((f) => f.endsWith(".jsonl"));
+      assert.equal(files.length, 2);
+
+      const line = (await fs.readFile(path.join(sourceDir, files[0]), "utf-8")).trim();
+      assert.ok(JSON.parse(line).thread_id);
+    } finally {
+      await fs.remove(dir);
+    }
+  });
+});
 
 describe("toTrainingJsonl — SFT style", () => {
   const output = toTrainingJsonl([FIXTURE], { style: "sft" });

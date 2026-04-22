@@ -27,7 +27,7 @@ function slugify(str = "") {
 /**
  * @param {object} opts
  * @param {string}   [opts.output="./agent-backup"]
- * @param {string}   [opts.format="json"]  "json","markdown","training-jsonl"
+ * @param {string}   [opts.format="json"]  "json"|"jsonl"
  * @param {string}   [opts.since]          ISO8601 — only export records after this date
  * @param {number}   [opts.workers=8]
  * @param {Function} [opts.onProgress]
@@ -40,6 +40,9 @@ export async function runExport(opts = {}) {
     workers = 8,
     onProgress = null,
   } = opts;
+  if (!["json", "jsonl"].includes(format)) {
+    throw new Error(`Unsupported export format: ${format}. Use "json" or "jsonl".`);
+  }
 
   const progress = (p, t, msg) => {
     if (onProgress) onProgress(p, t, msg);
@@ -52,7 +55,11 @@ export async function runExport(opts = {}) {
   if (await fs.pathExists(manifestPath)) {
     prevManifest = await fs.readJson(manifestPath).catch(() => null);
   }
-  const prevHashes = new Set(prevManifest?.items?.map((i) => i.hash) || []);
+  const prevHashes = new Set(
+    (prevManifest?.items || [])
+      .filter((i) => i.file?.endsWith(`.${format}`))
+      .map((i) => i.hash)
+  );
   const sinceCutoff = since ? new Date(since).getTime() : null;
 
   // ── Scan ──────────────────────────────────────────────────────────────────
@@ -100,9 +107,13 @@ export async function runExport(opts = {}) {
     const toolDir = path.join(output, source);
     await fs.ensureDir(toolDir);
     const slug = slugify(record.meta?.prompt || record.thread_id);
-    const filename = `${source}-${slug}-${hash}.json`;
+    const filename = `${source}-${slug}-${hash}.${format}`;
     const filePath = path.join(toolDir, filename);
-    await fs.writeJson(filePath, record, { spaces: 2 });
+    if (format === "jsonl") {
+      await fs.writeFile(filePath, JSON.stringify(record) + "\n", "utf-8");
+    } else {
+      await fs.writeJson(filePath, record, { spaces: 2 });
+    }
 
     const fileContent = await fs.readFile(filePath);
     const sha256 = crypto.createHash("sha256").update(fileContent).digest("hex");
@@ -121,6 +132,7 @@ export async function runExport(opts = {}) {
     new_items: newCount,
     skipped_items: skippedCount,
     items: manifestItems,
+    format,
   };
   await fs.writeJson(manifestPath, manifest, { spaces: 2 });
 

@@ -29,7 +29,7 @@ Global Options:
 
 export Options:
   --output <dir>         Output directory  (default: ./agent-backup)
-  --format <fmt>         json | markdown | training-jsonl  (default: json)
+  --format <fmt>         json | jsonl  (default: json)
   --since <ISO8601>      Only export records newer than this date
   --workers <n>          Concurrent file workers  (default: 8)
 

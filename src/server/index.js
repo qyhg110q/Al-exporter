@@ -433,9 +433,9 @@ async function calculateStatsStreaming(dir, groupBy) {
       
       const files = await fs.readdir(subPath);
       for (const f of files) {
-        if (!f.endsWith(".json")) continue;
+        if (!isRecordFile(f)) continue;
         try {
-          const record = await fs.readJson(path.join(subPath, f));
+          const record = await readRecordFile(path.join(subPath, f));
           total_records++;
           
           // Basic counters
@@ -720,11 +720,12 @@ async function handleThreads(req, res, url) {
   const size = parseInt(url.searchParams.get("size") || "20", 10);
   const source = url.searchParams.get("source");
   const search = url.searchParams.get("q")?.toLowerCase();
+  const full = url.searchParams.get("full") === "1";
   const dataDir = serverSettings.dataDir || OUTPUT_DIR;
 
   try {
     const { items, total } = await loadRecordsPaginated(dataDir, { 
-      page, size, search, source, onlyMetadata: true 
+      page, size, search, source, onlyMetadata: !full
     });
     respond(res, 200, { total, page, size, items });
 
@@ -747,15 +748,17 @@ async function handleThread(req, res, threadId) {
       const st = await fs.stat(subPath).catch(() => null);
       if (!st?.isDirectory()) continue;
 
-      const filePath = path.join(subPath, `${threadId}.json`);
-      try {
-        record = await fs.readJson(filePath);
-        // Check if this is normalized data (has thread_id field)
-        if (record.thread_id === threadId || record.schema_version) {
-          return respond(res, 200, record);
+      for (const ext of [".json", ".jsonl"]) {
+        const filePath = path.join(subPath, `${threadId}${ext}`);
+        try {
+          record = await readRecordFile(filePath);
+          // Check if this is normalized data (has thread_id field)
+          if (record.thread_id === threadId || record.schema_version) {
+            return respond(res, 200, record);
+          }
+        } catch {
+          // File not found in this directory, continue searching
         }
-      } catch {
-        // File not found in this directory, continue searching
       }
     }
 
@@ -767,14 +770,14 @@ async function handleThread(req, res, threadId) {
 
       const files = await fs.readdir(subPath);
       for (const f of files) {
-        if (!f.endsWith('.json')) continue;
+        if (!isRecordFile(f)) continue;
         const filePath = path.join(subPath, f);
         try {
-          const content = await fs.readJson(filePath);
+          const content = await readRecordFile(filePath);
           // Match by thread_id, path (for unnormalized data), or filename
           if (content.thread_id === threadId ||
               content.path?.includes(threadId) ||
-              f.replace('.json', '') === threadId) {
+              f.replace(/\.(json|jsonl)$/, '') === threadId) {
             // If this is unnormalized data, transform it to normalized format
             if (!content.schema_version) {
               record = transformToNormalized(content, filePath);
@@ -936,7 +939,7 @@ async function loadRecordsPaginated(dir, { page = 1, size = 20, search = null, s
       if (!st?.isDirectory()) continue;
       const files = await fs.readdir(subPath);
       for (const f of files) {
-        if (f.endsWith(".json")) allFilePaths.push(path.join(subPath, f));
+        if (isRecordFile(f)) allFilePaths.push(path.join(subPath, f));
       }
     }
 
@@ -945,7 +948,7 @@ async function loadRecordsPaginated(dir, { page = 1, size = 20, search = null, s
 
     for (const filePath of allFilePaths) {
       try {
-        const record = await fs.readJson(filePath);
+        const record = await readRecordFile(filePath);
         
         // Apply filters
         if (source && record.meta?.source !== source) continue;
@@ -973,6 +976,20 @@ async function loadRecordsPaginated(dir, { page = 1, size = 20, search = null, s
   } catch { /* ignore dir not found */ }
 
   return { items: matches, total };
+}
+
+function isRecordFile(fileName) {
+  return fileName.endsWith(".json") || fileName.endsWith(".jsonl");
+}
+
+async function readRecordFile(filePath) {
+  if (filePath.endsWith(".jsonl")) {
+    const text = await fs.readFile(filePath, "utf-8");
+    const line = text.split(/\r?\n/).find((l) => l.trim());
+    if (!line) throw new Error("Empty JSONL file");
+    return JSON.parse(line);
+  }
+  return fs.readJson(filePath);
 }
 
 async function loadRecordsFromDir(dir, { onlyMetadata = false, search = null, source = null } = {}) {

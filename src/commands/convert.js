@@ -1,7 +1,7 @@
 /** `convert` command — transform backup dir to a target format. */
 import fs from "fs-extra";
 import path from "node:path";
-import { toTrainingJsonl, toMarkdownAll, computeStats } from "../../core/convert.js";
+import { toTrainingJsonl, toMarkdownAll } from "../../core/convert.js";
 import log from "../logger.js";
 
 /**
@@ -38,19 +38,27 @@ export async function runConvert({ input, to = "training-jsonl", output, templat
 
 async function loadRecords(input) {
   const stat = await fs.stat(input);
-  if (stat.isFile()) return [await fs.readJson(input)];
-  // Directory: read all .json files recursively
+  if (stat.isFile()) return readRecordsFromFile(input);
+  // Directory: read all .json/.jsonl files recursively
   const records = [];
   const walk = async (dir) => {
     const entries = await fs.readdir(dir, { withFileTypes: true });
     for (const e of entries) {
       const full = path.join(dir, e.name);
       if (e.isDirectory()) await walk(full);
-      else if (e.name.endsWith(".json") && e.name !== "manifest.json") {
-        try { records.push(await fs.readJson(full)); } catch { /* skip */ }
+      else if ((e.name.endsWith(".json") || e.name.endsWith(".jsonl")) && e.name !== "manifest.json") {
+        try { records.push(...await readRecordsFromFile(full)); } catch { /* skip */ }
       }
     }
   };
   await walk(input);
   return records;
+}
+
+async function readRecordsFromFile(filePath) {
+  if (filePath.endsWith(".jsonl")) {
+    const text = await fs.readFile(filePath, "utf-8");
+    return text.split(/\r?\n/).filter((line) => line.trim()).map((line) => JSON.parse(line));
+  }
+  return [await fs.readJson(filePath)];
 }

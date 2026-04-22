@@ -234,8 +234,15 @@ import fs from 'fs-extra';
  * 保存记录到指定目录
  * @param {object[]} records
  * @param {string} outputDir
+ * @param {object} [opts]
+ * @param {string} [opts.format="json"]  "json" | "jsonl"
  */
-export async function saveRecordsToDir(records, outputDir) {
+export async function saveRecordsToDir(records, outputDir, opts = {}) {
+  const { format = "json" } = opts;
+  if (!["json", "jsonl"].includes(format)) {
+    throw new Error(`Unsupported record file format: ${format}`);
+  }
+
   const limit = pLimit(5); // Even more conservative to avoid EMFILE
 
   await fs.ensureDir(outputDir);
@@ -248,8 +255,9 @@ export async function saveRecordsToDir(records, outputDir) {
     const firstContent = r.messages?.[0]?.content;
     const id = r.thread_id || (typeof firstContent === 'string' ? firstContent.slice(0, 20) : (firstContent ? JSON.stringify(firstContent).slice(0, 20) : Date.now()));
     const safeId = String(id).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 50);
-    const filePath = path.join(dir, `${safeId}.json`);
-    await fs.writeFile(filePath, JSON.stringify(r, null, 2));
+    const filePath = path.join(dir, `${safeId}.${format}`);
+    const content = format === "jsonl" ? JSON.stringify(r) + "\n" : JSON.stringify(r, null, 2);
+    await fs.writeFile(filePath, content, "utf-8");
   }));
   
   await Promise.all(tasks);
