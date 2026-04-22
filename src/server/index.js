@@ -721,11 +721,15 @@ async function handleThreads(req, res, url) {
   const source = url.searchParams.get("source");
   const search = url.searchParams.get("q")?.toLowerCase();
   const full = url.searchParams.get("full") === "1";
+  const project = url.searchParams.get("project");
+  const startDate = url.searchParams.get("startDate");
+  const endDate = url.searchParams.get("endDate");
+  const sortOrder = normalizeSortOrder(url.searchParams.get("sortOrder"));
   const dataDir = serverSettings.dataDir || OUTPUT_DIR;
 
   try {
     const { items, total } = await loadRecordsPaginated(dataDir, { 
-      page, size, search, source, onlyMetadata: !full
+      page, size, search, source, project, startDate, endDate, sortOrder, onlyMetadata: !full
     });
     respond(res, 200, { total, page, size, items });
 
@@ -922,11 +926,26 @@ async function readBody(req) {
   });
 }
 
-/** Efficient listing with filtering and pagination */
-async function loadRecordsPaginated(dir, { page = 1, size = 20, search = null, source = null, onlyMetadata = false }) {
+/** Efficient listing with filtering, date sorting, and pagination */
+export async function loadRecordsPaginated(
+  dir,
+  {
+    page = 1,
+    size = 20,
+    search = null,
+    source = null,
+    project = null,
+    startDate = null,
+    endDate = null,
+    sortOrder = "desc",
+    onlyMetadata = false,
+  } = {}
+) {
   const offset = (page - 1) * size;
   const matches = [];
-  let total = 0;
+  const startTs = parseDateBoundary(startDate, false);
+  const endTs = parseDateBoundary(endDate, true);
+  const direction = normalizeSortOrder(sortOrder) === "asc" ? 1 : -1;
 
   try {
     const subDirs = await fs.readdir(dir);
@@ -943,15 +962,16 @@ async function loadRecordsPaginated(dir, { page = 1, size = 20, search = null, s
       }
     }
 
-    // Sort by name or time if possible? Filenames are often related to time in this ecosystem
-    allFilePaths.sort().reverse(); 
-
     for (const filePath of allFilePaths) {
       try {
         const record = await readRecordFile(filePath);
+        const sortTs = getRecordDateMs(record);
         
         // Apply filters
         if (source && record.meta?.source !== source) continue;
+        if (project && record.meta?.project !== project) continue;
+        if (startTs !== null && (!sortTs || sortTs < startTs)) continue;
+        if (endTs !== null && (!sortTs || sortTs > endTs)) continue;
         if (search) {
           const combined = (
             (record.meta?.prompt || "") + 
@@ -961,21 +981,55 @@ async function loadRecordsPaginated(dir, { page = 1, size = 20, search = null, s
           if (!combined.includes(search)) continue;
         }
 
-        total++;
-
-        // Only collect items within the requested page range
-        if (total > offset && matches.length < size) {
-          if (onlyMetadata) {
-            delete record.messages;
-            delete record.context;
-          }
-          matches.push(record);
-        }
+        matches.push({ filePath, record, sortTs });
       } catch { /* skip */ }
     }
   } catch { /* ignore dir not found */ }
 
-  return { items: matches, total };
+  matches.sort((a, b) => {
+    if (a.sortTs !== b.sortTs) return (a.sortTs - b.sortTs) * direction;
+    return a.filePath.localeCompare(b.filePath) * direction;
+  });
+
+  const total = matches.length;
+  const items = matches.slice(offset, offset + size).map(({ record }) => {
+    if (onlyMetadata) {
+      delete record.messages;
+      delete record.context;
+    }
+    return record;
+  });
+
+  return { items, total };
+}
+
+function normalizeSortOrder(value) {
+  return value === "asc" ? "asc" : "desc";
+}
+
+function parseDateBoundary(value, endOfDay) {
+  if (!value) return null;
+  const text = String(value);
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(text)
+    ? new Date(`${text}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}`)
+    : new Date(text);
+  const ts = date.getTime();
+  return Number.isFinite(ts) ? ts : null;
+}
+
+function getRecordDateMs(record) {
+  const candidates = [
+    record?.meta?.updated_at,
+    record?.meta?.created_at,
+    record?.updated_at,
+    record?.created_at,
+    record?.messages?.[record.messages.length - 1]?.timestamp,
+  ];
+  for (const value of candidates) {
+    const ts = value ? new Date(value).getTime() : NaN;
+    if (Number.isFinite(ts)) return ts;
+  }
+  return 0;
 }
 
 function isRecordFile(fileName) {

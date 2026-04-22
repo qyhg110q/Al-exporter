@@ -353,6 +353,13 @@
         <option value="">All Projects</option>
       </select>
     </div>
+    <div class="filter-group">
+      <label>Sort</label>
+      <select id="sort-order" onchange="applyFilter()">
+        <option value="desc">Newest first</option>
+        <option value="asc">Oldest first</option>
+      </select>
+    </div>
   </div>
   <div class="content" id="content"></div>
   <div class="pagination-wrap" id="pagination-footer" style="display:none;"></div>
@@ -715,6 +722,7 @@ let currentPage = 1;
 const pageSize = 25; // 5x5 grid
 let totalDisplay = 0;
 let isLoading = false;
+let sortOrder = 'desc';
 
 // ── Init ────────────────────────────────────────────────────────────────────
 const API_BASE = window.location.protocol === 'file:' ? 'http://127.0.0.1:8080' : '';
@@ -1072,6 +1080,7 @@ async function renderContent() {
   const startDate = document.getElementById('filter-start-date').value;
   const endDate = document.getElementById('filter-end-date').value;
   const project = document.getElementById('filter-project').value;
+  sortOrder = document.getElementById('sort-order')?.value || 'desc';
 
   const bar = document.getElementById('filter-bar');
   const footer = document.getElementById('pagination-footer');
@@ -1099,11 +1108,12 @@ async function renderContent() {
     const url = new URL(`${API_BASE}/api/threads`, window.location.origin);
     url.searchParams.set('page', currentPage);
     url.searchParams.set('size', pageSize);
+    url.searchParams.set('sortOrder', sortOrder);
     if (activeSource) url.searchParams.set('source', activeSource);
     if (q) url.searchParams.set('q', q);
-    // Note: server doesn't currently support startDate/endDate/project, 
-    // so we'll keep those client-side or add them to the server if needed.
-    // For now, let's at least get the paginated list.
+    if (startDate) url.searchParams.set('startDate', startDate);
+    if (endDate) url.searchParams.set('endDate', endDate);
+    if (project) url.searchParams.set('project', project);
 
     const res = await fetch(url);
     const data = await res.json();
@@ -1233,7 +1243,7 @@ function renderCards(recordsVisible) {
     const tokens = r.meta?.tokens || 0;
     const prompt = escHtml(r.meta?.prompt || r.thread_id || 'Untitled');
     const filePath = escHtml(r.meta?.file_path || '');
-    const dateStr = formatThreadTime(r.meta?.created_at || r.updated_at);
+    const dateStr = formatThreadTime(r.meta?.updated_at || r.meta?.created_at || r.updated_at);
 
     return `<div class="thread-card" onclick="openDetail(${i})">
       <div class="card-tags">
@@ -1883,16 +1893,32 @@ function applyExportFilters(items) {
   const startDate = document.getElementById('filter-start-date').value;
   const endDate = document.getElementById('filter-end-date').value;
   const project = document.getElementById('filter-project').value;
+  const direction = (document.getElementById('sort-order')?.value || 'desc') === 'asc' ? 1 : -1;
   const startTs = startDate ? new Date(startDate + 'T00:00:00').getTime() : null;
   const endTs = endDate ? new Date(endDate + 'T23:59:59').getTime() : null;
 
   return items.filter((r) => {
     if (project && r.meta?.project !== project) return false;
-    const ts = r.meta?.created_at ? new Date(r.meta.created_at).getTime() : null;
+    const ts = getRecordDateMs(r);
     if (startTs && (!ts || ts < startTs)) return false;
     if (endTs && (!ts || ts > endTs)) return false;
     return true;
-  });
+  }).sort((a, b) => (getRecordDateMs(a) - getRecordDateMs(b)) * direction);
+}
+
+function getRecordDateMs(r) {
+  const candidates = [
+    r?.meta?.updated_at,
+    r?.meta?.created_at,
+    r?.updated_at,
+    r?.created_at,
+    r?.messages?.[r.messages.length - 1]?.timestamp,
+  ];
+  for (const value of candidates) {
+    const ts = value ? new Date(value).getTime() : NaN;
+    if (Number.isFinite(ts)) return ts;
+  }
+  return 0;
 }
 
 async function writeRecordsToDirectory(dirHandle, items, format) {
