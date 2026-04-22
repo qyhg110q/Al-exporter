@@ -126,12 +126,9 @@ async function route(req, res) {
 async function handleScan(req, res) {
   const body = await readBody(req);
   const workspace = body.workspace || os.homedir();
-  const dataDir = body.dataDir || OUTPUT_DIR;
+  const dataDir = body.dataDir || serverSettings.dataDir || OUTPUT_DIR;
   const jobId = createJob("scan");
   respond(res, 202, { job_id: jobId });
-
-  // 累计已保存的记录
-  let savedRecords = [];
 
   // Run async - 使用增量扫描
   (async () => {
@@ -158,11 +155,10 @@ async function handleScan(req, res) {
         onChunk: async (records, info) => {
           // 每阶段完成时实时保存
           const { saveRecordsToDir } = await import("../../core/convert.js");
-          await saveRecordsToDir(records, dataDir);
-          savedRecords.push(...records);
+          const normalized = normalizeAll(records);
+          await saveRecordsToDir(normalized, dataDir);
           
           // 推送实时更新到前端
-          const normalized = normalizeAll(records);
           updateJob(jobId, { 
             message: `Depth ${info.depth}: +${records.length} records`,
             realtimeRecords: normalized.slice(0, 20) // 推送前20条
@@ -176,7 +172,7 @@ async function handleScan(req, res) {
 
       updateJob(jobId, { progress: 70, message: "Normalizing..." });
       const fileRecords = normalizeAll(files);
-      const allRecords = [...savedRecords, ...fileRecords, ...sqliteRecords];
+      const allRecords = [...fileRecords, ...sqliteRecords];
 
       // 去重
       const uniqueMap = new Map();
@@ -192,6 +188,11 @@ async function handleScan(req, res) {
       await saveRecordsToDir(dedupedRecords, dataDir);
 
       const sourcesSeen = [...new Set(dedupedRecords.map((r) => r.meta?.source || "unknown"))].sort();
+      const sourceCounts = dedupedRecords.reduce((acc, r) => {
+        const source = r.meta?.source || "unknown";
+        acc[source] = (acc[source] || 0) + 1;
+        return acc;
+      }, {});
       const warningCount = dedupedRecords.filter((r) => r.meta?.warnings?.length).length;
 
       finishJob(jobId, {
@@ -199,6 +200,7 @@ async function handleScan(req, res) {
         total_sqlite: sqliteRecords.length,
         total_records: dedupedRecords.length,
         sources_seen: sourcesSeen,
+        source_counts: sourceCounts,
         warning_count: warningCount,
         records: dedupedRecords,
         dataDir: dataDir,
@@ -634,7 +636,7 @@ function handleListAgents(req, res) {
 
 // 内存中的设置存储
 let serverSettings = {
-  dataDir: path.resolve(path.join(os.homedir(), "Downloads/AI-Exporter"))
+  dataDir: path.resolve(path.join(os.homedir(), "Downloads/AI-Exporter")),
 };
 
 async function handleSettings(req, res) {

@@ -114,11 +114,17 @@ function normalizeItem(item) {
 }
 
 function buildRecord({ type, toolSource, item, messages, context, prompt, tokens, confidence, warnings }) {
+  const normalizedMessages = (messages || []).map((m) => ({
+    ...m,
+    role: m?.role || "unknown",
+    content: stringifyContent(m?.content),
+  }));
+
   const record = {
     schema_version: SCHEMA_VERSION,
     thread_id: makeId(item.path),
     type,
-    messages,
+    messages: normalizedMessages,
     context: {
       files: context?.files || [],
       diffs: context?.diffs || [],
@@ -136,6 +142,20 @@ function buildRecord({ type, toolSource, item, messages, context, prompt, tokens
   };
   if (warnings.length > 0) record.meta.warnings = warnings;
   return record;
+}
+
+function stringifyContent(content) {
+  if (typeof content === "string") return content;
+  if (content === null || content === undefined) return "";
+  if (Array.isArray(content)) {
+    return content.map((item) => {
+      if (typeof item === "string") return item;
+      if (item?.text !== undefined) return stringifyContent(item.text);
+      if (item?.content !== undefined) return stringifyContent(item.content);
+      return JSON.stringify(item);
+    }).filter(Boolean).join("\n");
+  }
+  return JSON.stringify(content);
 }
 
 // ─── Project inference ────────────────────────────────────────────────────────
