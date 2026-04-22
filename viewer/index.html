@@ -736,7 +736,7 @@ async function triggerScan(isManualRefresh = false) {
   }
 
   try {
-    const scanBody = JSON.stringify({ dataDir: settings.dataDir });
+    const scanBody = JSON.stringify({ dataDir: settings.dataDir, sourceDirs: settings.sourceDirs || [] });
     const res = await fetch(`${API_BASE}/api/scan`, { method: 'POST', body: scanBody, headers: { 'Content-Type': 'application/json' } });
     const { job_id } = await res.json();
     
@@ -799,7 +799,17 @@ async function triggerScan(isManualRefresh = false) {
           // 更新最后扫描时间
           const now = new Date();
           const timeStr = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0') + ' ' + String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
-          document.getElementById('last-scan-time').textContent = '上次: ' + timeStr;
+          const sourceCounts = jobData.result?.source_counts || {};
+          const codexCount = sourceCounts.codex || 0;
+          const sourceSummary = Object.entries(sourceCounts)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 3)
+            .map(([source, count]) => `${source}:${count}`)
+            .join(' ');
+          document.getElementById('last-scan-time').textContent = '上次: ' + timeStr + (sourceSummary ? ' | ' + sourceSummary : '');
+          if (codexCount === 0 && settings.sourceDirs?.length) {
+            console.warn('No Codex records found. Scan roots:', jobData.result?.scan_roots || []);
+          }
           
           if (isManualRefresh) {
             // Deduplicate scanned records to fix DB bloating
@@ -1835,8 +1845,11 @@ function exportAll() {
 
 // ── Settings ───────────────────────────────────────────────────────────────────
 let settings = {
-  dataDir: ''  // 初始为空，从服务器加载
+  dataDir: '',  // 初始为空，从服务器加载
+  sourceDirs: []
 };
+
+const SETTINGS_STORAGE_KEY = 'ai-exporter-settings';
 
 function getDefaultDataDir() {
   // 尝试从 input 获取用户名，如果不存在则使用默认值
@@ -1846,16 +1859,31 @@ function getDefaultDataDir() {
 }
 
 async function loadSettings() {
+  let localSettings = {};
+  try {
+    localSettings = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) || '{}');
+  } catch {}
+
   try {
     const res = await fetch(`${API_BASE}/api/settings`);
     if (res.ok) {
       const data = await res.json();
-      settings.dataDir = data.dataDir || getDefaultDataDir();
+      settings.dataDir = localSettings.dataDir || data.dataDir || getDefaultDataDir();
+      settings.sourceDirs = Array.isArray(localSettings.sourceDirs)
+        ? localSettings.sourceDirs
+        : (Array.isArray(data.sourceDirs) ? data.sourceDirs : []);
+      await fetch(`${API_BASE}/api/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings)
+      }).catch(() => {});
     } else {
-      settings.dataDir = getDefaultDataDir();
+      settings.dataDir = localSettings.dataDir || getDefaultDataDir();
+      settings.sourceDirs = Array.isArray(localSettings.sourceDirs) ? localSettings.sourceDirs : [];
     }
   } catch (e) {
-    settings.dataDir = getDefaultDataDir();
+    settings.dataDir = localSettings.dataDir || getDefaultDataDir();
+    settings.sourceDirs = Array.isArray(localSettings.sourceDirs) ? localSettings.sourceDirs : [];
     console.warn('loadSettings failed', e);
   }
 }
@@ -1884,6 +1912,7 @@ function selectFolder() {
 
 function openSettings() {
   document.getElementById('settings-data-dir').value = settings.dataDir;
+  document.getElementById('settings-source-dirs').value = (settings.sourceDirs || []).join('\n');
   document.getElementById('settings-modal').classList.add('open');
 }
 
@@ -1893,15 +1922,21 @@ function closeSettings() {
 
 async function saveSettings() {
   const newDir = document.getElementById('settings-data-dir').value.trim();
+  const sourceDirsText = document.getElementById('settings-source-dirs').value.trim();
+  const sourceDirs = sourceDirsText
+    ? sourceDirsText.split(/\r?\n|;/).map(s => s.trim()).filter(Boolean)
+    : [];
   if (newDir) {
     settings.dataDir = newDir;
+    settings.sourceDirs = sourceDirs;
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
     try {
       await fetch(`${API_BASE}/api/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dataDir: newDir })
+        body: JSON.stringify({ dataDir: newDir, sourceDirs })
       });
-      alert('设置已保存！请重启服务以使数据目录生效。');
+      alert('设置已保存。下次扫描会使用新的源目录。');
     } catch (e) {
       alert('保存失败: ' + e.message);
     }
@@ -2110,6 +2145,11 @@ async function syncToAgent() {
         <input id="settings-data-dir" type="text" placeholder="./agent-backup" style="flex:1;" />
         <button onclick="selectFolder()" style="padding: 8px 12px; border: 1px solid #dde0ea; border-radius: 8px; background: #f3f4f6; cursor: pointer;">📁 选择</button>
       </div>
+    </div>
+    <div class="modal-row">
+      <label>额外源数据目录</label>
+      <textarea id="settings-source-dirs" placeholder="D:\path\to\.codex\sessions" style="width:100%;min-height:86px;padding:10px;border:1px solid #dde0ea;border-radius:8px;font-size:13px;resize:vertical;"></textarea>
+      <div style="font-size:12px;color:#6b7280;margin-top:6px;">每行一个目录。Codex 非默认位置可填 .codex 或 .codex\sessions。</div>
     </div>
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeSettings()">取消</button>

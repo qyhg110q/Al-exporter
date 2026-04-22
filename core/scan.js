@@ -220,10 +220,53 @@ function getBaseDepth(pattern) {
  * 获取目录的最大扫描深度
  */
 function getMaxDepth(pattern) {
+  const normalized = pattern.replace(/\\/g, "/");
   for (const deep of DEEP_SCAN_PATTERNS) {
-    if (pattern.startsWith(deep)) return 10;
+    if (normalized.startsWith(deep) || normalized.includes(`/${deep}/`) || normalized.endsWith(`/${deep}`)) return 10;
   }
   return 6;
+}
+
+function normalizeExtraRoots(extraRoots = []) {
+  return extraRoots
+    .flatMap((root) => String(root || "").split(/\r?\n|;/))
+    .map((root) => root.trim())
+    .filter(Boolean)
+    .map((root) => path.resolve(root));
+}
+
+function getEnvironmentRoots() {
+  const roots = [];
+  const codexHome = process.env.CODEX_HOME?.trim();
+  if (codexHome) {
+    roots.push(codexHome, path.join(codexHome, "sessions"));
+  }
+  return roots;
+}
+
+export function resolveScanRoots({ extraPatterns = [], extraRoots = [] } = {}) {
+  const homeRoots = [...PATH_PATTERNS, ...extraPatterns]
+    .filter(Boolean)
+    .map((pattern) => {
+      const patternText = String(pattern).trim();
+      return {
+        root: path.isAbsolute(patternText) ? path.resolve(patternText) : path.join(HOME, patternText),
+        pattern: patternText,
+      };
+    });
+
+  const customRoots = normalizeExtraRoots([...getEnvironmentRoots(), ...extraRoots]).map((root) => ({
+    root,
+    pattern: root,
+  }));
+
+  const seen = new Set();
+  return [...homeRoots, ...customRoots].filter(({ root }) => {
+    const key = path.normalize(root).toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /**
@@ -317,6 +360,7 @@ async function processFiles(filePaths, { workers = 8, maxFileSizeBytes = 10 * 10
  * @param {number} [opts.workers=8]
  * @param {number} [opts.maxFileSizeBytes=10*1024*1024]
  * @param {string[]} [opts.extraPatterns]
+ * @param {string[]} [opts.extraRoots] - Absolute source directories to scan.
  * @param {Function} [opts.onProgress] - 每次扫描完成回调 (phase, depth, found, total)
  * @param {Function} [opts.onChunk] - 每阶段完成回调 (records) - 可用于实时保存
  * @returns {Promise<Array>} 所有扫描到的文件
@@ -325,10 +369,11 @@ export async function scanAllToolsIncremental({
   workers = 8,
   maxFileSizeBytes = 10 * 1024 * 1024,
   extraPatterns = [],
+  extraRoots = [],
   onProgress = null,
   onChunk = null,
 } = {}) {
-  const patterns = [...PATH_PATTERNS, ...extraPatterns];
+  const scanRoots = resolveScanRoots({ extraPatterns, extraRoots });
   const allResults = [];
   const seenPaths = new Set();
 
@@ -345,8 +390,7 @@ export async function scanAllToolsIncremental({
     const allPathsAtDepth = [];
     
     await Promise.all(
-      patterns.map(async (pattern) => {
-        const fullRoot = path.join(HOME, pattern);
+      scanRoots.map(async ({ root: fullRoot, pattern }) => {
         const baseDepth = getBaseDepth(pattern);
         const maxDepth = getMaxDepth(pattern);
         
@@ -391,6 +435,7 @@ export async function scanAllTools({
   workers = 8,
   maxFileSizeBytes = 10 * 1024 * 1024,
   extraPatterns = [],
+  extraRoots = [],
   onProgress = null,
 } = {}) {
   // 使用增量扫描，一次性返回所有结果
@@ -398,6 +443,7 @@ export async function scanAllTools({
     workers,
     maxFileSizeBytes,
     extraPatterns,
+    extraRoots,
     onProgress: onProgress ? (phase, depth, found, total, msg) => {
       // 转换旧格式的回调
       onProgress(found, total, msg || "");

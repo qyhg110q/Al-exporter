@@ -13,7 +13,7 @@ import {
   createJob, getJob, updateJob, finishJob, failJob, cancelJob,
   addSseListener, removeSseListener,
 } from "./store.js";
-import { scanAllTools } from "../../core/scan.js";
+import { resolveScanRoots, scanAllTools } from "../../core/scan.js";
 import { normalizeAll } from "../../core/normalize.js";
 import { collectAllVscdbRecords } from "../../core/cursor_sqlite.js";
 import { validateAll } from "../../core/schema-validator.js";
@@ -127,8 +127,18 @@ async function handleScan(req, res) {
   const body = await readBody(req);
   const workspace = body.workspace || os.homedir();
   const dataDir = body.dataDir || serverSettings.dataDir || OUTPUT_DIR;
+  const sourceDirs = Array.isArray(body.sourceDirs)
+    ? body.sourceDirs
+    : (body.sourceDirs ? String(body.sourceDirs).split(/\r?\n|;/) : serverSettings.sourceDirs);
   const jobId = createJob("scan");
   respond(res, 202, { job_id: jobId });
+
+  const scanRoots = await Promise.all(
+    resolveScanRoots({ extraRoots: sourceDirs }).map(async ({ root }) => ({
+      root,
+      exists: await fs.pathExists(root),
+    }))
+  );
 
   // Run async - 使用增量扫描
   (async () => {
@@ -138,6 +148,7 @@ async function handleScan(req, res) {
       const { scanAllToolsIncremental } = await import("../../core/scan.js");
       
       const files = await scanAllToolsIncremental({
+        extraRoots: sourceDirs,
         onProgress: (phase, depth, done, total, msg) => {
           // 阶段进度: 0-25% 第一阶段, 25-50% 第二阶段, etc.
           const baseProgress = (phase - 1) * 25;
@@ -201,6 +212,7 @@ async function handleScan(req, res) {
         total_records: dedupedRecords.length,
         sources_seen: sourcesSeen,
         source_counts: sourceCounts,
+        scan_roots: scanRoots,
         warning_count: warningCount,
         records: dedupedRecords,
         dataDir: dataDir,
@@ -637,6 +649,7 @@ function handleListAgents(req, res) {
 // 内存中的设置存储
 let serverSettings = {
   dataDir: path.resolve(path.join(os.homedir(), "Downloads/AI-Exporter")),
+  sourceDirs: [],
 };
 
 async function handleSettings(req, res) {
@@ -648,6 +661,12 @@ async function handleSettings(req, res) {
     if (body.dataDir) {
       // 将相对路径转换为绝对路径
       serverSettings.dataDir = path.isAbsolute(body.dataDir) ? body.dataDir : path.resolve(body.dataDir);
+    }
+    if (Array.isArray(body.sourceDirs)) {
+      serverSettings.sourceDirs = body.sourceDirs
+        .map((dir) => String(dir || "").trim())
+        .filter(Boolean)
+        .map((dir) => path.isAbsolute(dir) ? dir : path.resolve(dir));
     }
     respond(res, 200, serverSettings);
   }
