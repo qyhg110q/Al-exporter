@@ -18,7 +18,6 @@ Thumbs.db
 # Project specific
 agent-backup/
 agent-backup-test/
-docs/
 *.log
 viewer/data.js
 
