@@ -340,6 +340,7 @@
       <button class="btn-export" id="btn-settings" onclick="openSettings()">⚙ 设置</button>
       <button class="btn-export" id="btn-export-all" onclick="exportAllFiles('json')">⬆ JSON Files</button>
       <button class="btn-export" id="btn-export-all-jsonl" onclick="exportAllFiles('jsonl')">⬆ JSONL Files</button>
+      <button class="btn-export" id="btn-export-all-markdown" onclick="exportAllFiles('markdown')">⬆ Markdown Files</button>
     </div>
   </div>
   <div class="filter-bar" id="filter-bar" style="display:none;">
@@ -374,6 +375,7 @@
       <div class="detail-header-actions">
         <button onclick="copyCurrentThread()" class="btn-action">Copy</button>
         <button onclick="exportCurrentThread()" class="btn-action primary">Export JSON</button>
+        <button onclick="exportCurrentThread('markdown')" class="btn-action">Export Markdown</button>
         <button class="btn-close" onclick="closeDetail()">✕</button>
       </div>
     </div>
@@ -1872,14 +1874,14 @@ function copyCurrentThread() {
   navigator.clipboard.writeText(text).then(() => alert('Thread copied to clipboard!'));
 }
 
-function exportCurrentThread() {
+function exportCurrentThread(format = 'json') {
   if (!currentDetailRecord) return;
   const r = currentDetailRecord;
-  const blob = new Blob([JSON.stringify(r, null, 2)], { type: 'application/json' });
+  const blob = new Blob([recordFileContent(r, format)], { type: recordMimeType(format) });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `${safeFilePart(recordDisplayName(r))}.json`;
+  a.download = recordFileName(r, format);
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -1975,7 +1977,7 @@ async function writeRecordsToDirectory(dirHandle, items, format) {
 }
 
 function downloadRecordFile(r, format) {
-  const blob = new Blob([recordFileContent(r, format)], { type: format === 'jsonl' ? 'application/x-ndjson' : 'application/json' });
+  const blob = new Blob([recordFileContent(r, format)], { type: recordMimeType(format) });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -1987,11 +1989,51 @@ function downloadRecordFile(r, format) {
 }
 
 function recordFileContent(r, format) {
-  return format === 'jsonl' ? JSON.stringify(r) + '\n' : JSON.stringify(r, null, 2);
+  if (format === 'jsonl') return JSON.stringify(r) + '\n';
+  if (format === 'markdown') return recordToMarkdown(r);
+  return JSON.stringify(r, null, 2);
 }
 
 function recordFileName(r, format) {
-  return `${safeFilePart(recordDisplayName(r))}.${format}`;
+  const extension = format === 'markdown' ? 'md' : format;
+  return `${safeFilePart(recordDisplayName(r))}.${extension}`;
+}
+
+function recordMimeType(format) {
+  if (format === 'jsonl') return 'application/x-ndjson';
+  if (format === 'markdown') return 'text/markdown';
+  return 'application/json';
+}
+
+function recordToMarkdown(r) {
+  const meta = r.meta || {};
+  const lines = [
+    `# Thread: ${meta.prompt || r.thread_id || 'untitled'}`,
+    '',
+    `> **Source:** ${meta.source || 'unknown'} | **Project:** ${meta.project || 'unknown'} | **Created:** ${meta.created_at || 'unknown'}`,
+    '',
+  ];
+
+  for (const msg of r.messages || []) {
+    const role = String(msg.role || 'message');
+    const heading = role.charAt(0).toUpperCase() + role.slice(1);
+    lines.push(`## ${heading}`, '', messageContentToText(msg.content) || '*(empty)*', '');
+  }
+
+  const files = r.context?.files || [];
+  if (files.length > 0) {
+    lines.push('## Context Files', '');
+    for (const f of files) lines.push(`- \`${typeof f === 'string' ? f : f.path || JSON.stringify(f)}\``);
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+function messageContentToText(content) {
+  if (typeof content === 'string') return content;
+  if (content == null) return '';
+  return JSON.stringify(content, null, 2);
 }
 
 function recordDisplayName(r) {

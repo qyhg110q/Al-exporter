@@ -81,6 +81,7 @@ node index.js scan
 
 # 导出数据
 node index.js export
+node src/cli.js export --format markdown --output ./agent-backup-md
 
 # 启动 Web 服务
 node open-viewer.js
@@ -221,6 +222,7 @@ node index.js scan
 
 # Export data
 node index.js export
+node src/cli.js export --format markdown --output ./agent-backup-md
 
 # Start web server
 node open-viewer.js

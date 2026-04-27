@@ -39,6 +39,22 @@ describe("saveRecordsToDir", () => {
       await fs.remove(dir);
     }
   });
+
+  it("writes one Markdown file per record when format is markdown", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "aex-md-"));
+    try {
+      await saveRecordsToDir([FIXTURE], dir, { format: "markdown" });
+      const sourceDir = path.join(dir, "cursor");
+      const files = (await fs.readdir(sourceDir)).filter((f) => f.endsWith(".md"));
+      assert.equal(files.length, 1);
+
+      const markdown = await fs.readFile(path.join(sourceDir, files[0]), "utf-8");
+      assert.ok(markdown.includes("# Thread: Binary search"));
+      assert.ok(markdown.includes("## User"));
+    } finally {
+      await fs.remove(dir);
+    }
+  });
 });
 
 describe("toTrainingJsonl — SFT style", () => {

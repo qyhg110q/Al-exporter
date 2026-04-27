@@ -235,11 +235,11 @@ import fs from 'fs-extra';
  * @param {object[]} records
  * @param {string} outputDir
  * @param {object} [opts]
- * @param {string} [opts.format="json"]  "json" | "jsonl"
+ * @param {string} [opts.format="json"]  "json" | "jsonl" | "markdown"
  */
 export async function saveRecordsToDir(records, outputDir, opts = {}) {
   const { format = "json" } = opts;
-  if (!["json", "jsonl"].includes(format)) {
+  if (!["json", "jsonl", "markdown"].includes(format)) {
     throw new Error(`Unsupported record file format: ${format}`);
   }
 
@@ -255,10 +255,17 @@ export async function saveRecordsToDir(records, outputDir, opts = {}) {
     const firstContent = r.messages?.[0]?.content;
     const id = r.thread_id || (typeof firstContent === 'string' ? firstContent.slice(0, 20) : (firstContent ? JSON.stringify(firstContent).slice(0, 20) : Date.now()));
     const safeId = String(id).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 50);
-    const filePath = path.join(dir, `${safeId}.${format}`);
-    const content = format === "jsonl" ? JSON.stringify(r) + "\n" : JSON.stringify(r, null, 2);
+    const extension = format === "markdown" ? "md" : format;
+    const filePath = path.join(dir, `${safeId}.${extension}`);
+    const content = recordFileContent(r, format);
     await fs.writeFile(filePath, content, "utf-8");
   }));
   
   await Promise.all(tasks);
+}
+
+function recordFileContent(record, format) {
+  if (format === "jsonl") return JSON.stringify(record) + "\n";
+  if (format === "markdown") return toMarkdown(record);
+  return JSON.stringify(record, null, 2);
 }

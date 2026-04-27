@@ -9,6 +9,7 @@ import crypto from "node:crypto";
 import { scanAllTools } from "../../core/scan.js";
 import { normalizeAll, SCHEMA_VERSION } from "../../core/normalize.js";
 import { collectAllVscdbRecords } from "../../core/cursor_sqlite.js";
+import { toMarkdown } from "../../core/convert.js";
 import log from "../logger.js";
 
 const EXPORTER_VERSION = "2.0.0";
@@ -27,7 +28,7 @@ function slugify(str = "") {
 /**
  * @param {object} opts
  * @param {string}   [opts.output="./agent-backup"]
- * @param {string}   [opts.format="json"]  "json"|"jsonl"
+ * @param {string}   [opts.format="json"]  "json"|"jsonl"|"markdown"
  * @param {string}   [opts.since]          ISO8601 — only export records after this date
  * @param {number}   [opts.workers=8]
  * @param {Function} [opts.onProgress]
@@ -40,8 +41,8 @@ export async function runExport(opts = {}) {
     workers = 8,
     onProgress = null,
   } = opts;
-  if (!["json", "jsonl"].includes(format)) {
-    throw new Error(`Unsupported export format: ${format}. Use "json" or "jsonl".`);
+  if (!["json", "jsonl", "markdown"].includes(format)) {
+    throw new Error(`Unsupported export format: ${format}. Use "json", "jsonl", or "markdown".`);
   }
 
   const progress = (p, t, msg) => {
@@ -57,7 +58,7 @@ export async function runExport(opts = {}) {
   }
   const prevHashes = new Set(
     (prevManifest?.items || [])
-      .filter((i) => i.file?.endsWith(`.${format}`))
+      .filter((i) => i.file?.endsWith(`.${format === "markdown" ? "md" : format}`))
       .map((i) => i.hash)
   );
   const sinceCutoff = since ? new Date(since).getTime() : null;
@@ -107,10 +108,13 @@ export async function runExport(opts = {}) {
     const toolDir = path.join(output, source);
     await fs.ensureDir(toolDir);
     const slug = slugify(record.meta?.prompt || record.thread_id);
-    const filename = `${source}-${slug}-${hash}.${format}`;
+    const extension = format === "markdown" ? "md" : format;
+    const filename = `${source}-${slug}-${hash}.${extension}`;
     const filePath = path.join(toolDir, filename);
     if (format === "jsonl") {
       await fs.writeFile(filePath, JSON.stringify(record) + "\n", "utf-8");
+    } else if (format === "markdown") {
+      await fs.writeFile(filePath, toMarkdown(record), "utf-8");
     } else {
       await fs.writeJson(filePath, record, { spaces: 2 });
     }
