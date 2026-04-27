@@ -355,10 +355,7 @@
     </div>
     <div class="filter-group">
       <label>Sort</label>
-      <select id="sort-order" onchange="applyFilter()">
-        <option value="desc">Newest first</option>
-        <option value="asc">Oldest first</option>
-      </select>
+      <button class="btn-export" id="sort-toggle" onclick="toggleSortOrder()">Newest first</button>
     </div>
   </div>
   <div class="content" id="content"></div>
@@ -1080,7 +1077,7 @@ async function renderContent() {
   const startDate = document.getElementById('filter-start-date').value;
   const endDate = document.getElementById('filter-end-date').value;
   const project = document.getElementById('filter-project').value;
-  sortOrder = document.getElementById('sort-order')?.value || 'desc';
+  updateSortToggle();
 
   const bar = document.getElementById('filter-bar');
   const footer = document.getElementById('pagination-footer');
@@ -1167,6 +1164,20 @@ function renderPagination(total) {
   footer.innerHTML = html;
 }
 
+function toggleSortOrder() {
+  sortOrder = sortOrder === 'asc' ? 'desc' : 'asc';
+  currentPage = 1;
+  updateSortToggle();
+  renderContent();
+}
+
+function updateSortToggle() {
+  const btn = document.getElementById('sort-toggle');
+  if (!btn) return;
+  btn.textContent = sortOrder === 'asc' ? 'Oldest first' : 'Newest first';
+  btn.title = 'Click to toggle time order';
+}
+
 function goToPage(n) {
   currentPage = n;
   renderContent();
@@ -1231,7 +1242,7 @@ function renderOverview() {
 // ── Thread Cards ────────────────────────────────────────────────────────────
 let currentVisible = [];
 function renderCards(recordsVisible) {
-  currentVisible = recordsVisible || [];
+  currentVisible = assignRecordDisplayNames(recordsVisible || []);
   if (currentVisible.length === 0) {
     document.getElementById('content').innerHTML = `<div class="empty"><div class="em">🔍</div>No results found.</div>`;
     return;
@@ -1241,9 +1252,10 @@ function renderCards(recordsVisible) {
     const src    = r.meta?.source || 'unknown';
     const type   = (r.type || 'thread').toUpperCase();
     const tokens = r.meta?.tokens || 0;
-    const prompt = escHtml(r.meta?.prompt || r.thread_id || 'Untitled');
+    const title = escHtml(r.__cardLabel || recordDisplayBase(r) || 'Untitled');
     const filePath = escHtml(r.meta?.file_path || '');
-    const dateStr = formatThreadTime(r.meta?.updated_at || r.meta?.created_at || r.updated_at);
+    const prompt = escHtml(r.meta?.prompt || r.thread_id || '');
+    const project = escHtml(r.meta?.project || '');
 
     return `<div class="thread-card" onclick="openDetail(${i})">
       <div class="card-tags">
@@ -1251,10 +1263,10 @@ function renderCards(recordsVisible) {
         <span class="tag tag-type">${type}</span>
         <span class="tag tag-tokens">~${fmtNum(tokens)}</span>
       </div>
-      <div class="card-title">${prompt}</div>
+      <div class="card-title">${title}</div>
       <div class="card-footer">
-        <div class="card-path">${filePath}</div>
-        <div class="card-date">${dateStr}</div>
+        <div class="card-path" title="${prompt || filePath}">${prompt || filePath}</div>
+        <div class="card-date">${project}</div>
       </div>
     </div>`;
   }).join('') + `</div>`;
@@ -1290,6 +1302,7 @@ async function openDetail(idx) {
     const res = await fetch(`${API_BASE}/api/thread/${identifier}`);
     if (!res.ok) throw new Error('Failed to load thread');
     const fullRecord = await res.json();
+    fullRecord.__cardLabel = r.__cardLabel;
 
     currentDetailRecord = fullRecord;
     renderDetailContent(fullRecord);
@@ -1730,6 +1743,41 @@ function formatThreadTime(isoString) {
   }
 }
 
+function getRecordDateMs(r) {
+  const messages = Array.isArray(r?.messages) ? r.messages : [];
+  const candidates = [
+    r?.meta?.updated_at,
+    r?.meta?.created_at,
+    r?.updated_at,
+    r?.created_at,
+    messages.length ? messages[messages.length - 1]?.timestamp : null,
+  ];
+  for (const value of candidates) {
+    const ts = value ? new Date(value).getTime() : NaN;
+    if (Number.isFinite(ts)) return ts;
+  }
+  return 0;
+}
+
+function recordDisplayBase(r) {
+  const ts = getRecordDateMs(r);
+  if (!ts) return 'unknown-time';
+  const d = new Date(ts);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function assignRecordDisplayNames(items) {
+  const counts = new Map();
+  return items.map((r) => {
+    const base = recordDisplayBase(r);
+    const count = counts.get(base) || 0;
+    counts.set(base, count + 1);
+    r.__cardLabel = count === 0 ? base : `${base}-${count}`;
+    return r;
+  });
+}
+
 function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 function fmtNum(n) {
   if (!n) return '0';
@@ -1829,7 +1877,7 @@ function exportCurrentThread() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `${r.meta?.source || 'export'}-${r.thread_id || Date.now()}.json`;
+  a.download = `${safeFilePart(recordDisplayName(r))}.json`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -1873,8 +1921,15 @@ async function loadAllRecordsForExport() {
     url.searchParams.set('page', page);
     url.searchParams.set('size', pageSizeForExport);
     url.searchParams.set('full', '1');
+    url.searchParams.set('sortOrder', sortOrder);
     if (activeSource) url.searchParams.set('source', activeSource);
     if (q) url.searchParams.set('q', q);
+    const startDate = document.getElementById('filter-start-date').value;
+    const endDate = document.getElementById('filter-end-date').value;
+    const project = document.getElementById('filter-project').value;
+    if (startDate) url.searchParams.set('startDate', startDate);
+    if (endDate) url.searchParams.set('endDate', endDate);
+    if (project) url.searchParams.set('project', project);
 
     const res = await fetch(url);
     if (!res.ok) throw new Error('Failed to load records');
@@ -1886,14 +1941,14 @@ async function loadAllRecordsForExport() {
     page++;
   }
 
-  return applyExportFilters(all);
+  return assignRecordDisplayNames(applyExportFilters(all));
 }
 
 function applyExportFilters(items) {
   const startDate = document.getElementById('filter-start-date').value;
   const endDate = document.getElementById('filter-end-date').value;
   const project = document.getElementById('filter-project').value;
-  const direction = (document.getElementById('sort-order')?.value || 'desc') === 'asc' ? 1 : -1;
+  const direction = sortOrder === 'asc' ? 1 : -1;
   const startTs = startDate ? new Date(startDate + 'T00:00:00').getTime() : null;
   const endTs = endDate ? new Date(endDate + 'T23:59:59').getTime() : null;
 
@@ -1904,21 +1959,6 @@ function applyExportFilters(items) {
     if (endTs && (!ts || ts > endTs)) return false;
     return true;
   }).sort((a, b) => (getRecordDateMs(a) - getRecordDateMs(b)) * direction);
-}
-
-function getRecordDateMs(r) {
-  const candidates = [
-    r?.meta?.updated_at,
-    r?.meta?.created_at,
-    r?.updated_at,
-    r?.created_at,
-    r?.messages?.[r.messages.length - 1]?.timestamp,
-  ];
-  for (const value of candidates) {
-    const ts = value ? new Date(value).getTime() : NaN;
-    if (Number.isFinite(ts)) return ts;
-  }
-  return 0;
 }
 
 async function writeRecordsToDirectory(dirHandle, items, format) {
@@ -1949,10 +1989,11 @@ function recordFileContent(r, format) {
 }
 
 function recordFileName(r, format) {
-  const source = safeFilePart(r.meta?.source || 'export');
-  const title = safeFilePart(r.meta?.prompt || r.thread_id || Date.now());
-  const id = safeFilePart(r.thread_id || Date.now());
-  return `${source}-${title}-${id}.${format}`;
+  return `${safeFilePart(recordDisplayName(r))}.${format}`;
+}
+
+function recordDisplayName(r) {
+  return r.__cardLabel || recordDisplayBase(r);
 }
 
 function safeFilePart(value) {
