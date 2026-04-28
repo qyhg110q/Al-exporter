@@ -9,7 +9,7 @@ import crypto from "node:crypto";
 import { scanAllTools } from "../../core/scan.js";
 import { normalizeAll, SCHEMA_VERSION } from "../../core/normalize.js";
 import { collectAllVscdbRecords } from "../../core/cursor_sqlite.js";
-import { toMarkdown } from "../../core/convert.js";
+import { toMarkdown, assignRecordDisplayNames, recordFileName } from "../../core/convert.js";
 import log from "../logger.js";
 
 const EXPORTER_VERSION = "2.0.0";
@@ -17,14 +17,6 @@ const EXPORTER_VERSION = "2.0.0";
 function threadHash(record) {
   return crypto.createHash("sha1").update(JSON.stringify(record)).digest("hex").slice(0, 12);
 }
-function slugify(str = "") {
-  return str.toLowerCase()
-    .replace(/[\x00-\x1F\x7F]/g, "")
-    .replace(/[\\/\?%*:|"<>]/g, "-")
-    .replace(/\s+/g, "_")
-    .substring(0, 50).replace(/^_+|_+$/g, "") || "untitled";
-}
-
 /**
  * @param {object} opts
  * @param {string}   [opts.output="./agent-backup"]
@@ -89,6 +81,7 @@ export async function runExport(opts = {}) {
   // ── Write ─────────────────────────────────────────────────────────────────
   progress(70, 100, "Writing output…");
   await fs.ensureDir(output);
+  allRecords = assignRecordDisplayNames(allRecords);
   const exportedAt = new Date().toISOString();
   const manifestItems = [];
   const sourcesSeen = new Set();
@@ -107,9 +100,7 @@ export async function runExport(opts = {}) {
 
     const toolDir = path.join(output, source);
     await fs.ensureDir(toolDir);
-    const slug = slugify(record.meta?.prompt || record.thread_id);
-    const extension = format === "markdown" ? "md" : format;
-    const filename = `${source}-${slug}-${hash}.${extension}`;
+    const filename = recordFileName(record, format);
     const filePath = path.join(toolDir, filename);
     if (format === "jsonl") {
       await fs.writeFile(filePath, JSON.stringify(record) + "\n", "utf-8");

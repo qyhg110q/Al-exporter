@@ -154,6 +154,57 @@ export function toMarkdownAll(records) {
     .join("");
 }
 
+export function recordDisplayBase(record) {
+  const ts = getRecordDateMs(record);
+  if (!ts) return "unknown-time";
+  const d = new Date(ts);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+export function assignRecordDisplayNames(records) {
+  const counts = new Map();
+  return records.map((record) => {
+    const base = recordDisplayBase(record);
+    const count = counts.get(base) || 0;
+    counts.set(base, count + 1);
+    record.__cardLabel = count === 0 ? base : `${base}-${count}`;
+    return record;
+  });
+}
+
+export function recordDisplayName(record) {
+  return record.__cardLabel || recordDisplayBase(record);
+}
+
+export function safeFilePart(value) {
+  return String(value || "untitled")
+    .replace(/[\x00-\x1F\x7F]/g, "")
+    .replace(/[\\/\?%*:|"<>]/g, "-")
+    .replace(/\s+/g, "_")
+    .slice(0, 60)
+    .replace(/^_+|_+$/g, "") || "untitled";
+}
+
+export function recordFileName(record, format) {
+  const extension = format === "markdown" ? "md" : format;
+  return `${safeFilePart(recordDisplayName(record))}.${extension}`;
+}
+
+function getRecordDateMs(record) {
+  const candidates = [
+    record.meta?.created_at,
+    record.meta?.updated_at,
+    record.created_at,
+    record.updated_at,
+  ];
+  for (const value of candidates) {
+    const ts = value ? new Date(value).getTime() : 0;
+    if (Number.isFinite(ts) && ts > 0) return ts;
+  }
+  return 0;
+}
+
 export function computeStats(records, groupBy = ["project", "source"]) {
   const groups = {};
 
@@ -246,17 +297,14 @@ export async function saveRecordsToDir(records, outputDir, opts = {}) {
   const limit = pLimit(5); // Even more conservative to avoid EMFILE
 
   await fs.ensureDir(outputDir);
+  const namedRecords = assignRecordDisplayNames(records);
 
-  const tasks = records.map(r => limit(async () => {
+  const tasks = namedRecords.map(r => limit(async () => {
     const src = r.meta?.source || 'unknown';
     const dir = path.join(outputDir, src);
     await fs.ensureDir(dir);
 
-    const firstContent = r.messages?.[0]?.content;
-    const id = r.thread_id || (typeof firstContent === 'string' ? firstContent.slice(0, 20) : (firstContent ? JSON.stringify(firstContent).slice(0, 20) : Date.now()));
-    const safeId = String(id).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 50);
-    const extension = format === "markdown" ? "md" : format;
-    const filePath = path.join(dir, `${safeId}.${extension}`);
+    const filePath = path.join(dir, recordFileName(r, format));
     const content = recordFileContent(r, format);
     await fs.writeFile(filePath, content, "utf-8");
   }));
