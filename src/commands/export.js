@@ -15,7 +15,8 @@ import log from "../logger.js";
 const EXPORTER_VERSION = "2.0.0";
 
 function threadHash(record) {
-  return crypto.createHash("sha1").update(JSON.stringify(record)).digest("hex").slice(0, 12);
+  const { __cardLabel, ...stableRecord } = record || {};
+  return crypto.createHash("sha1").update(JSON.stringify(stableRecord)).digest("hex").slice(0, 12);
 }
 /**
  * @param {object} opts
@@ -48,9 +49,12 @@ export async function runExport(opts = {}) {
   if (await fs.pathExists(manifestPath)) {
     prevManifest = await fs.readJson(manifestPath).catch(() => null);
   }
+  const prevManifestFormat = prevManifest?.format;
+  const prevItems = prevManifest?.items || [];
+  const prevItemsByHash = new Map(prevItems.map((item) => [item.hash, item]));
   const prevHashes = new Set(
-    (prevManifest?.items || [])
-      .filter((i) => i.file?.endsWith(`.${format === "markdown" ? "md" : format}`))
+    prevItems
+      .filter((i) => prevManifestFormat === format || i.file?.endsWith(`.${format === "markdown" ? "md" : format}`))
       .map((i) => i.hash)
   );
   const sinceCutoff = since ? new Date(since).getTime() : null;
@@ -94,7 +98,13 @@ export async function runExport(opts = {}) {
 
     if (prevHashes.has(hash)) {
       skippedCount++;
-      manifestItems.push({ hash, source, thread_id: record.thread_id });
+      const prevItem = prevItemsByHash.get(hash) || {};
+      manifestItems.push({
+        ...prevItem,
+        hash,
+        source,
+        thread_id: record.thread_id,
+      });
       continue;
     }
 

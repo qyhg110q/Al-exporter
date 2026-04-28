@@ -383,7 +383,7 @@ function inferTimestampFromKey(key = "") {
       return new Date(parseInt(tsMatch[1], 10)).toISOString();
     } catch { /* ignore */ }
   }
-  return new Date().toISOString();
+  return null;
 }
 
 function estimateTokens(text = "") {

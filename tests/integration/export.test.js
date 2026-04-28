@@ -9,10 +9,12 @@ import assert from "node:assert/strict";
 import fs from "fs-extra";
 import path from "node:path";
 import os from "node:os";
+import { setTimeout as delay } from "node:timers/promises";
 import { runExport } from "../../src/commands/export.js";
 import { validateAll } from "../../core/schema-validator.js";
 
 let tmpDir;
+const quietProgress = () => {};
 
 before(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aex-test-"));
@@ -36,7 +38,7 @@ describe("runExport integration", () => {
 
   it("completes without throwing", async () => {
     outputDir = path.join(tmpDir, "output");
-    result = await runExport({ output: outputDir, workers: 2 });
+    result = await runExport({ output: outputDir, workers: 2, onProgress: quietProgress });
     assert.ok(result, "runExport should return a result object");
   });
 
@@ -69,5 +71,31 @@ describe("runExport integration", () => {
       const { invalid } = validateAll(records);
       assert.equal(invalid, 0, `${invalid} records failed schema validation`);
     }
+  });
+
+  it("does not rewrite unchanged markdown files on repeated export", async () => {
+    const markdownDir = path.join(tmpDir, "output-markdown");
+    const firstRun = await runExport({ output: markdownDir, format: "markdown", workers: 2, onProgress: quietProgress });
+    assert.ok(firstRun.total > 0, "expected at least one markdown export");
+
+    const firstManifest = await fs.readJson(path.join(markdownDir, "manifest.json"));
+    const markdownItem = firstManifest.items.find(i => i.file?.endsWith(".md"));
+    assert.ok(markdownItem?.file, "expected markdown manifest item with file path");
+
+    const markdownPath = path.join(markdownDir, markdownItem.file);
+    const beforeStat = await fs.stat(markdownPath);
+
+    await delay(1100);
+
+    const secondRun = await runExport({ output: markdownDir, format: "markdown", workers: 2, onProgress: quietProgress });
+    assert.equal(secondRun.new_items, 0, "unchanged markdown export should not write new files");
+    assert.ok(secondRun.skipped_items > 0, "unchanged markdown export should skip existing files");
+
+    const secondManifest = await fs.readJson(path.join(markdownDir, "manifest.json"));
+    const secondMarkdownItem = secondManifest.items.find(i => i.hash === markdownItem.hash);
+    assert.equal(secondMarkdownItem?.file, markdownItem.file, "skipped manifest item should retain file path");
+
+    const afterStat = await fs.stat(markdownPath);
+    assert.equal(afterStat.mtimeMs, beforeStat.mtimeMs, "markdown file mtime should stay unchanged");
   });
 });
