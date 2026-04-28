@@ -31,6 +31,8 @@ export Options:
   --output <dir>         Output directory  (default: ./agent-backup)
   --format <fmt>         json | jsonl | markdown  (default: json)
   --since <ISO8601>      Only export records newer than this date
+  --min-user-messages <n>
+                         Skip records with fewer than N user messages  (default: 0)
   --workers <n>          Concurrent file workers  (default: 8)
 
 scan Options:
@@ -96,10 +98,11 @@ async function main() {
       case "export": {
         const { runExport } = await import("./commands/export.js");
         const result = await runExport({
-          output:  args.output  || "./agent-backup",
-          format:  args.format  || "json",
-          since:   args.since   || null,
-          workers: args.workers ? parseInt(args.workers, 10) : 8,
+          output:          args.output  || "./agent-backup",
+          format:          args.format  || "json",
+          since:           args.since   || null,
+          minUserMessages: args["min-user-messages"] ? parseInt(args["min-user-messages"], 10) : 0,
+          workers:         args.workers ? parseInt(args.workers, 10) : 8,
         });
         log.info(`✅ Done  new=${result.new_items}  skipped=${result.skipped_items}  total=${result.total}`);
         break;

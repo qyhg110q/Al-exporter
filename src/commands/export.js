@@ -23,6 +23,7 @@ function threadHash(record) {
  * @param {string}   [opts.output="./agent-backup"]
  * @param {string}   [opts.format="json"]  "json"|"jsonl"|"markdown"
  * @param {string}   [opts.since]          ISO8601 — only export records after this date
+ * @param {number}   [opts.minUserMessages=0]  Skip records with fewer than this many user messages
  * @param {number}   [opts.workers=8]
  * @param {Function} [opts.onProgress]
  */
@@ -31,11 +32,15 @@ export async function runExport(opts = {}) {
     output = "./agent-backup",
     format = "json",
     since = null,
+    minUserMessages = 0,
     workers = 8,
     onProgress = null,
   } = opts;
   if (!["json", "jsonl", "markdown"].includes(format)) {
     throw new Error(`Unsupported export format: ${format}. Use "json", "jsonl", or "markdown".`);
+  }
+  if (!Number.isInteger(minUserMessages) || minUserMessages < 0) {
+    throw new Error(`Invalid minUserMessages: ${minUserMessages}. Use a non-negative integer.`);
   }
 
   const progress = (p, t, msg) => {
@@ -80,6 +85,11 @@ export async function runExport(opts = {}) {
       return ts >= sinceCutoff;
     });
     log.info(`After --since filter: ${allRecords.length} records`);
+  }
+  if (minUserMessages > 0) {
+    const beforeCount = allRecords.length;
+    allRecords = filterRecordsByMinUserMessages(allRecords, minUserMessages);
+    log.info(`After --min-user-messages filter: ${allRecords.length} records (dropped ${beforeCount - allRecords.length})`);
   }
 
   // ── Write ─────────────────────────────────────────────────────────────────
@@ -144,4 +154,13 @@ export async function runExport(opts = {}) {
   progress(100, 100, "Done");
   log.info(`Export complete — new: ${newCount}, skipped: ${skippedCount}`);
   return { output, new_items: newCount, skipped_items: skippedCount, total: allRecords.length, sources_seen: [...sourcesSeen].sort(), manifest_path: manifestPath };
+}
+
+export function countUserMessages(record) {
+  return (record?.messages || []).filter((msg) => msg?.role === "user").length;
+}
+
+export function filterRecordsByMinUserMessages(records, minUserMessages = 0) {
+  if (!minUserMessages) return records;
+  return records.filter((record) => countUserMessages(record) >= minUserMessages);
 }
