@@ -177,6 +177,17 @@ export function recordDisplayName(record) {
   return record.__cardLabel || recordDisplayBase(record);
 }
 
+export function recordShortHash(record) {
+  const { __cardLabel, ...stableRecord } = record || {};
+  const input = JSON.stringify(stableRecord);
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0").slice(0, 6);
+}
+
 export function safeFilePart(value) {
   return String(value || "untitled")
     .replace(/[\x00-\x1F\x7F]/g, "")
@@ -188,7 +199,7 @@ export function safeFilePart(value) {
 
 export function recordFileName(record, format) {
   const extension = format === "markdown" ? "md" : format;
-  return `${safeFilePart(recordDisplayName(record))}.${extension}`;
+  return `${safeFilePart(`${recordDisplayBase(record)}-${recordShortHash(record)}`)}.${extension}`;
 }
 
 function getRecordDateMs(record) {

@@ -1996,7 +1996,7 @@ function recordFileContent(r, format) {
 
 function recordFileName(r, format) {
   const extension = format === 'markdown' ? 'md' : format;
-  return `${safeFilePart(recordDisplayName(r))}.${extension}`;
+  return `${safeFilePart(`${recordDisplayBase(r)}-${recordShortHash(r)}`)}.${extension}`;
 }
 
 function recordMimeType(format) {
@@ -2038,6 +2038,18 @@ function messageContentToText(content) {
 
 function recordDisplayName(r) {
   return r.__cardLabel || recordDisplayBase(r);
+}
+
+function recordShortHash(r) {
+  const stableRecord = { ...r };
+  delete stableRecord.__cardLabel;
+  const input = JSON.stringify(stableRecord);
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0').slice(0, 6);
 }
 
 function safeFilePart(value) {

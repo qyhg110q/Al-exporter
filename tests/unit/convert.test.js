@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import fs from "fs-extra";
 import os from "node:os";
 import path from "node:path";
-import { toTrainingJsonl, toMarkdown, computeStats, saveRecordsToDir, recordFileName, assignRecordDisplayNames } from "../../core/convert.js";
+import { toTrainingJsonl, toMarkdown, computeStats, saveRecordsToDir, recordFileName, assignRecordDisplayNames, recordShortHash } from "../../core/convert.js";
 
 const FIXTURE = {
   schema_version: "1.0.0",
@@ -56,9 +56,10 @@ describe("saveRecordsToDir", () => {
     }
   });
 
-  it("uses viewer-style timestamp filenames for markdown", () => {
+  it("uses timestamp plus short hash filenames for markdown", () => {
     const [record] = assignRecordDisplayNames([{ ...FIXTURE }]);
-    assert.equal(recordFileName(record, "markdown"), "2025-01-15_18-00.md");
+    assert.equal(recordFileName(record, "markdown"), `2025-01-15_18-00-${recordShortHash(record)}.md`);
+    assert.match(recordFileName(record, "markdown"), /^2025-01-15_18-00-[0-9a-f]{6}\.md$/);
   });
 });
 
