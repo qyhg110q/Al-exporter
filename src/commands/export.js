@@ -86,6 +86,11 @@ export async function runExport(opts = {}) {
     });
     log.info(`After --since filter: ${allRecords.length} records`);
   }
+  {
+    const beforeCount = allRecords.length;
+    allRecords = filterRecordsWithAssistantMessages(allRecords);
+    log.info(`After assistant-message filter: ${allRecords.length} records (dropped ${beforeCount - allRecords.length})`);
+  }
   if (minUserMessages > 0) {
     const beforeCount = allRecords.length;
     allRecords = filterRecordsByMinUserMessages(allRecords, minUserMessages);
@@ -158,6 +163,14 @@ export async function runExport(opts = {}) {
 
 export function countUserMessages(record) {
   return (record?.messages || []).filter((msg) => msg?.role === "user").length;
+}
+
+export function hasAssistantMessage(record) {
+  return (record?.messages || []).some((msg) => msg?.role === "assistant");
+}
+
+export function filterRecordsWithAssistantMessages(records) {
+  return records.filter((record) => hasAssistantMessage(record));
 }
 
 export function filterRecordsByMinUserMessages(records, minUserMessages = 0) {
